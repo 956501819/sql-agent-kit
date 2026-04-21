@@ -113,6 +113,9 @@ python examples/quickstart.py
 - **🔧 Agent 参数** — 调整重试次数、置信度阈值等行为参数
 - **📚 Few-shot 管理** — 添加问题-SQL 示例对，持续提升准确率
 
+![Web UI 截图](docs/images/screenshot001.png)
+![Web UI 截图](docs/images/screenshot002.png)
+![Web UI 截图](docs/images/screenshot003.png)
 ---
 
 ## 📁 项目结构
