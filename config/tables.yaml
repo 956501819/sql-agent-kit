@@ -1,9 +1,6 @@
-# ===================================================
-# ⭐ 白名单：只有这里列出的表才允许被查询
-# ===================================================
 allowed_tables:
-  - users
-  - categories
-  - products
-  - orders
-  - order_items
+- users
+- categories
+- products
+- orders
+- order_items
