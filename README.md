@@ -3,6 +3,11 @@
 **生产级 Text-to-SQL Agent 工具包** — 让自然语言直接查询你的数据库。
 作者联系邮箱：ly956501819@foxmail.com
 作者联系微信：ly956501819
+
+![Web UI 截图](docs/images/screenshot001.png)
+![Web UI 截图](docs/images/screenshot002.png)
+![Web UI 截图](docs/images/screenshot003.png)
+
 > 输入"上个月销售额最高的商品是什么？"，自动生成并执行 SQL，返回结果。
 
 - **自然语言转 SQL**：用中文提问，自动生成对应的 SQL 查询
@@ -113,9 +118,6 @@ python examples/quickstart.py
 - **🔧 Agent 参数** — 调整重试次数、置信度阈值等行为参数
 - **📚 Few-shot 管理** — 添加问题-SQL 示例对，持续提升准确率
 
-![Web UI 截图](docs/images/screenshot001.png)
-![Web UI 截图](docs/images/screenshot002.png)
-![Web UI 截图](docs/images/screenshot003.png)
 ---
 
 ## 📁 项目结构
