@@ -1,0 +1,22 @@
+# Core
+openai>=1.0.0           # OpenAI-compatible client (also used for Qwen)
+anthropic>=0.40.0        # Claude API
+sqlalchemy>=2.0.0        # DB connection abstraction
+sqlparse>=0.5.0          # SQL syntax validation
+pyyaml>=6.0              # Config file parsing
+python-dotenv>=1.0.0     # .env loading
+
+# Database drivers (install the ones you need)
+pymysql>=1.1.0           # MySQL
+psycopg2-binary>=2.9.0   # PostgreSQL
+# pyodbc>=5.0.0          # SQL Server (uncomment if needed)
+
+# Vector similarity for few-shot retrieval
+sentence-transformers>=3.0.0
+
+# Web UI (optional)
+gradio>=4.0.0
+
+# Utils
+tabulate>=0.9.0          # Result formatting
+rich>=13.0.0             # Terminal pretty output

@@ -1,0 +1,76 @@
+# ===================================================
+# ⭐ 语义注释层：给模糊的表名/字段名加上业务含义
+# ===================================================
+
+tables:
+  users:
+    description: "用户表，存储注册用户的基本信息"
+    columns:
+      id:
+        description: "用户唯一ID"
+      name:
+        description: "用户姓名"
+      email:
+        description: "用户邮箱，唯一"
+      phone:
+        description: "用户手机号"
+      created_at:
+        description: "注册时间"
+
+  categories:
+    description: "商品分类表"
+    columns:
+      id:
+        description: "分类唯一ID"
+      name:
+        description: "分类名称，如：电子产品、服装、食品"
+      parent_id:
+        description: "父分类ID，顶级分类为 NULL"
+      created_at:
+        description: "创建时间"
+
+  products:
+    description: "商品表，存储在售商品信息"
+    columns:
+      id:
+        description: "商品唯一ID"
+      name:
+        description: "商品名称"
+      category_id:
+        description: "所属分类ID，关联 categories.id"
+      price:
+        description: "商品价格，单位：元"
+      stock:
+        description: "当前库存数量"
+      created_at:
+        description: "商品上架时间"
+
+  orders:
+    description: "订单主表，记录每一笔交易的基本信息"
+    columns:
+      id:
+        description: "订单唯一ID"
+      user_id:
+        description: "下单用户ID，关联 users.id"
+      status:
+        description: "订单状态: pending=待付款, paid=已付款, shipped=已发货, completed=已完成, cancelled=已取消"
+      total_amount:
+        description: "订单总金额，单位：元"
+      created_at:
+        description: "订单创建时间"
+      updated_at:
+        description: "订单最后更新时间"
+
+  order_items:
+    description: "订单明细表，记录每笔订单中的具体商品"
+    columns:
+      id:
+        description: "明细行唯一ID"
+      order_id:
+        description: "所属订单ID，关联 orders.id"
+      product_id:
+        description: "商品ID，关联 products.id"
+      quantity:
+        description: "购买数量"
+      unit_price:
+        description: "购买时的商品单价，单位：元"

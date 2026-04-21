@@ -1,0 +1,34 @@
+# ===== 敏感信息（绝对不能提交）=====
+.env
+
+# ===== 日志（可能含真实查询数据）=====
+logs/queries.jsonl
+
+# ===== 用户数据（本地积累，不应提交）=====
+data/fewshot.json
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ===== 虚拟环境 =====
+.venv/
+venv/
+env/
+ENV/
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ===== macOS =====
+.DS_Store
