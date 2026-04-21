@@ -15,6 +15,11 @@ llm:
     model: Qwen/Qwen2.5-72B-Instruct   # 可选: deepseek-ai/DeepSeek-V3, THUDM/glm-4-9b-chat 等
     temperature: 0.0
     max_tokens: 2048
+  # 阿里云百炼平台（https://bailian.console.aliyun.com/）
+  bailian:
+    model: qwen-plus                    # 可选: qwen-max, qwen-turbo, qwen-long
+    temperature: 0.0
+    max_tokens: 2048
 
 agent:
   max_retry: 3              # SQL 执行失败最大重试次数
