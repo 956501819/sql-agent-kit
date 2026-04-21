@@ -4,8 +4,6 @@
 作者联系邮箱：ly956501819@foxmail.com
 作者联系微信：ly956501819
 
-![Web UI 截图](docs/images/screenshot001.png)
-![Web UI 截图](docs/images/screenshot002.png)
 ![Web UI 截图](docs/images/screenshot003.png)
 
 > 输入"上个月销售额最高的商品是什么？"，自动生成并执行 SQL，返回结果。
