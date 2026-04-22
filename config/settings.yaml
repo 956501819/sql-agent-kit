@@ -1,39 +1,31 @@
+agent:
+  confidence_threshold: 0.6
+  max_retry: 3
+  max_tables_in_prompt: 10
+executor:
+  max_rows: 500
+  query_timeout: 30
+feedback:
+  enabled: true
+  log_path: ./logs/queries.jsonl
+fewshot:
+  store_path: ./data/fewshot.json
+  top_k: 3
 llm:
-  provider: siliconflow          # openai | qwen | siliconflow
-  # OpenAI 兼容接口
-  openai:
-    model: gpt-4o
-    temperature: 0.0        # SQL 生成用 0，保证确定性
+  bailian:
     max_tokens: 2048
-  # 通义千问
-  qwen:
     model: qwen-plus
     temperature: 0.0
+  openai:
     max_tokens: 2048
-  # 硅基流动（支持 Qwen、DeepSeek、GLM 等开源模型）
+    model: gpt-4o
+    temperature: 0.0
+  provider: siliconflow
+  qwen:
+    max_tokens: 2048
+    model: qwen-plus
+    temperature: 0.0
   siliconflow:
-    model: Qwen/Qwen2.5-72B-Instruct   # 可选: deepseek-ai/DeepSeek-V3, THUDM/glm-4-9b-chat 等
-    temperature: 0.0
     max_tokens: 2048
-  # 阿里云百炼平台（https://bailian.console.aliyun.com/）
-  bailian:
-    model: qwen-plus                    # 可选: qwen-max, qwen-turbo, qwen-long
+    model: Qwen/Qwen2.5-72B-Instruct
     temperature: 0.0
-    max_tokens: 2048
-
-agent:
-  max_retry: 3              # SQL 执行失败最大重试次数
-  confidence_threshold: 0.6 # 低于此值时提示用户确认，不自动执行
-  max_tables_in_prompt: 10  # 单次 Prompt 最多注入几张表的 Schema
-
-executor:
-  query_timeout: 30         # SQL 查询超时时间（秒）
-  max_rows: 500             # 单次查询最大返回行数
-
-fewshot:
-  store_path: ./data/fewshot.json   # Few-shot 示例存储路径
-  top_k: 3                          # 每次检索最相似的 K 个示例
-
-feedback:
-  log_path: ./logs/queries.jsonl    # 查询日志路径（JSONL 格式）
-  enabled: true

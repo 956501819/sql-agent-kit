@@ -93,11 +93,11 @@ def write_env(updates: dict):
 
 def run_query(question: str):
     if not question.strip():
-        return "", "⚠️ 请输入问题", [], ""
+        return "", "⚠️ 请输入问题", [], "", "—"
     try:
         agent = get_agent()
     except Exception as e:
-        return "", f"❌ Agent 初始化失败: {e}", [], str(e)
+        return "", f"❌ Agent 初始化失败: {e}", [], str(e), "—"
 
     result: QueryResult = agent.query(question)
     status_icon = "✅" if result.success else ("⚠️" if result.need_confirm else "❌")
@@ -105,6 +105,10 @@ def run_query(question: str):
     status_text = f"{status_icon} {status_label}"
     if result.retry_count > 0:
         status_text += f"（重试 {result.retry_count} 次）"
+
+    # 置信度信息
+    confidence = result.confidence if hasattr(result, 'confidence') else 1.0
+    confidence_text = f"{confidence:.0%}"
 
     error_info = result.error if result.error else ""
 
@@ -124,7 +128,7 @@ def run_query(question: str):
                 rows.append(row)
             table_data = {"headers": headers, "data": rows}
 
-    return result.sql, status_text, table_data, error_info
+    return result.sql, status_text, table_data, error_info, confidence_text
 
 
 def run_query_ui(question: str):
@@ -351,7 +355,7 @@ def load_query_history(keyword: str = ""):
                 conf = d.get("confidence", "")
                 conf_str = f"{conf:.0%}" if isinstance(conf, float) else ""
                 row = [
-                    d.get("timestamp", ""),
+                    d.get("ts", d.get("timestamp", "")),
                     d.get("question", ""),
                     d.get("sql", ""),
                     "✅" if d.get("success") else "❌",
@@ -371,8 +375,63 @@ def load_query_history(keyword: str = ""):
     return rows
 
 
-def refresh_history(keyword: str = ""):
-    return load_query_history(keyword)
+def delete_history_record(index: int, keyword: str = ""):
+    """删除显示列表中第 index 条（1-based）记录，正确处理关键词过滤"""
+    if not os.path.exists(LOG_PATH):
+        return "⚠️ 暂无历史记录", load_query_history(keyword)
+    try:
+        with open(LOG_PATH, "r", encoding="utf-8") as f:
+            all_lines = [l for l in f.readlines() if l.strip()]
+
+        # 构建过滤+倒序后的 (文件行号, record) 列表，与界面显示一致
+        indexed = []
+        for i, line in enumerate(all_lines):
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            conf = d.get("confidence", "")
+            conf_str = f"{conf:.0%}" if isinstance(conf, float) else ""
+            row = [
+                d.get("ts", d.get("timestamp", "")),
+                d.get("question", ""),
+                d.get("sql", ""),
+                "✅" if d.get("success") else "❌",
+                str(d.get("rows_count", "")),
+                str(d.get("retry_count", 0)),
+                conf_str,
+            ]
+            if keyword and keyword.strip():
+                kw = keyword.strip().lower()
+                if not any(kw in str(cell).lower() for cell in row):
+                    continue
+            indexed.append(i)
+
+        indexed.reverse()  # 倒序，第 1 条 = 最新
+
+        idx = int(index) - 1
+        if idx < 0 or idx >= len(indexed):
+            return f"❌ 序号 {index} 超出范围（当前显示共 {len(indexed)} 条）", load_query_history(keyword)
+
+        file_line_idx = indexed[idx]
+        all_lines.pop(file_line_idx)
+
+        with open(LOG_PATH, "w", encoding="utf-8") as f:
+            f.writelines(all_lines)
+
+        return f"✅ 已删除第 {index} 条记录", load_query_history(keyword)
+    except Exception as e:
+        return f"❌ 删除失败: {e}", load_query_history(keyword)
+
+
+def clear_all_history():
+    """清空所有历史记录"""
+    try:
+        with open(LOG_PATH, "w", encoding="utf-8") as f:
+            f.write("")
+        return "✅ 已清空所有历史记录", []
+    except Exception as e:
+        return f"❌ 清空失败: {e}", load_query_history()
 
 
 # ===== 表白名单 =====
@@ -494,10 +553,21 @@ with gr.Blocks(
             )
             query_btn = gr.Button("🔍 查询", variant="primary", scale=1, min_width=80)
 
+        # 加载状态显示
+        loading_html = gr.HTML(
+            value="",
+            visible=False,
+        )
+
         status_output = gr.Textbox(
             label="执行状态",
             interactive=False,
             elem_classes=["status-box"],
+        )
+
+        confidence_display = gr.HTML(
+            label="置信度",
+            value="<div style='padding: 10px; font-size: 16px;'>—</div>",
         )
 
         with gr.Row():
@@ -517,7 +587,7 @@ with gr.Blocks(
         )
 
         def run_and_display(question):
-            sql, status, table_data, error = run_query(question)
+            sql, status, table_data, error, confidence = run_query(question)
             # 构造 Dataframe 数据
             if isinstance(table_data, dict) and table_data.get("data"):
                 headers = table_data["headers"]
@@ -530,18 +600,44 @@ with gr.Blocks(
             else:
                 import pandas as pd
                 df = pd.DataFrame()
-            return sql, status, df, error
+            
+            # 置信度颜色指示：绿色(>=80%)、黄色(60-80%)、红色(<60%)
+            try:
+                conf_float = float(confidence.rstrip('%')) / 100
+            except Exception:
+                conf_float = 0
+            
+            if conf_float >= 0.8:
+                color = "#22c55e"  # 绿色
+            elif conf_float >= 0.6:
+                color = "#eab308"  # 黄色
+            else:
+                color = "#ef4444"  # 红色
+            
+            confidence_html = f"""
+            <div style='padding: 10px; font-size: 16px; display: flex; align-items: center; gap: 10px;'>
+                <span style='color: #6b7280; font-size: 13px;'>置信度（AI 对生成 SQL 的把握程度）：</span>
+                <span style='font-weight: bold;'>{confidence}</span>
+                <div style='flex: 1; background: #e5e7eb; border-radius: 4px; height: 20px;'>
+                    <div style='width: {confidence}; background: {color}; height: 100%; border-radius: 4px;'></div>
+                </div>
+            </div>
+            """
+            return sql, status, df, error, confidence_html
 
-        query_btn.click(
-            fn=run_and_display,
-            inputs=[question_input],
-            outputs=[sql_output, status_output, result_df, error_output],
-        )
-        question_input.submit(
-            fn=run_and_display,
-            inputs=[question_input],
-            outputs=[sql_output, status_output, result_df, error_output],
-        )
+        def start_loading():
+            return (
+                gr.update(visible=True, value="<div style='padding: 10px; color: #666;'>⏳ 正在查询中，请稍候...</div>"),
+                gr.update(interactive=False),
+            )
+
+        def end_loading():
+            return (
+                gr.update(visible=False),
+                gr.update(interactive=True),
+            )
+
+        # 注：click/submit 事件在 history_table 定义之后统一注册（见文件末尾）
 
     # ========== Tab: 配置管理 ==========
     with gr.Tab("⚙️ 配置管理"):
@@ -666,12 +762,46 @@ with gr.Blocks(
             datatype=["str", "str", "str", "str", "str", "str", "str"],
             value=load_query_history(),
             wrap=True,
+            interactive=False,
         )
-        refresh_btn.click(fn=refresh_history, inputs=[history_search], outputs=[history_table])
-        history_search.change(fn=refresh_history, inputs=[history_search], outputs=[history_table])
 
-        # Tab 切换时自动刷新
-        history_tab.select(fn=lambda: load_query_history(), outputs=[history_table])
+        with gr.Row():
+            del_index = gr.Number(label="删除指定条（序号从 1 开始，最新记录为第 1 条）", precision=0, minimum=1, scale=3)
+            del_btn = gr.Button("🗑️ 删除该条", variant="stop", scale=1)
+            clear_btn = gr.Button("🧹 清空所有历史", variant="stop", scale=1)
+        del_result = gr.Textbox(label="操作结果", interactive=False)
+
+        def load_history(keyword: str = ""):
+            return load_query_history(keyword)
+
+        def do_delete(index, keyword):
+            return delete_history_record(index, keyword)
+
+        def do_clear():
+            return clear_all_history()
+
+        refresh_btn.click(fn=load_history, inputs=[history_search], outputs=[history_table])
+        history_search.submit(fn=load_history, inputs=[history_search], outputs=[history_table])
+        del_btn.click(fn=do_delete, inputs=[del_index, history_search], outputs=[del_result, history_table])
+        clear_btn.click(fn=do_clear, outputs=[del_result, history_table])
+
+    # ========== 查询按钮事件（在 history_table 定义后统一注册）==========
+    def _run_and_refresh(question):
+        sql, status, df, error, confidence_html = run_and_display(question)
+        return sql, status, df, error, confidence_html, load_query_history()
+
+    for _trigger in [query_btn.click, question_input.submit]:
+        _trigger(
+            fn=start_loading,
+            outputs=[loading_html, query_btn],
+        ).then(
+            fn=_run_and_refresh,
+            inputs=[question_input],
+            outputs=[sql_output, status_output, result_df, error_output, confidence_display, history_table],
+        ).then(
+            fn=end_loading,
+            outputs=[loading_html, query_btn],
+        )
 
     # ========== Tab: 表白名单 ==========
     with gr.Tab("🗂️ 表白名单"):
