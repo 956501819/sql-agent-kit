@@ -17,6 +17,7 @@ from .schema.annotator import SchemaAnnotator
 from .executor.db_connector import create_db_engine
 from .executor.runner import SQLRunner
 from .fewshot.store import FewShotStore
+from .graph.pipeline import build_pipeline
 
 
 def build_agent(
@@ -66,4 +67,4 @@ def build_agent(
     )
 
 
-__all__ = ["build_agent", "SQLAgent", "QueryResult"]
+__all__ = ["build_agent", "build_pipeline", "SQLAgent", "QueryResult"]

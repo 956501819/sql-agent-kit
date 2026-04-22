@@ -11,6 +11,7 @@ os.environ.setdefault("no_proxy", "localhost,127.0.0.1")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import yaml
+import pandas as pd
 import gradio as gr
 from sql_agent import build_agent, QueryResult
 
@@ -30,6 +31,48 @@ def reset_agent():
     global _agent
     with _agent_lock:
         _agent = None
+
+
+# 全局 Pipeline 实例（懒加载）
+_pipeline = None
+_pipeline_lock = threading.Lock()
+
+
+def get_pipeline():
+    global _pipeline
+    with _pipeline_lock:
+        if _pipeline is None:
+            from sql_agent.graph.pipeline import build_pipeline
+            _pipeline = build_pipeline()
+    return _pipeline
+
+
+def _render_judge_scores(scores: dict) -> str:
+    """将 judge_scores 渲染为彩色 HTML"""
+    if not scores:
+        return "<div style='padding:10px;color:#999'>评分不可用</div>"
+
+    def score_color(s):
+        if s >= 8:
+            return "#22c55e"
+        elif s >= 6:
+            return "#eab308"
+        else:
+            return "#ef4444"
+
+    items = [
+        ("SQL 准确性", scores.get("sql_correctness", 0)),
+        ("图表适配", scores.get("chart_fitness", 0)),
+        ("结论质量", scores.get("summary_quality", 0)),
+    ]
+    parts = []
+    for label, val in items:
+        color = score_color(val)
+        parts.append(
+            f"<span style='margin-right:20px'>{label}："
+            f"<strong style='color:{color};font-size:1.1em'>{val}/10</strong></span>"
+        )
+    return f"<div style='padding:10px;display:flex;align-items:center'>{''.join(parts)}</div>"
 
 
 def get_agent():
@@ -543,7 +586,7 @@ with gr.Blocks(
 """)
 
     # ========== Tab: 查询 ==========
-    with gr.Tab("💬 查询"):
+    with gr.Tab("💬 单Agent查询"):
         with gr.Row():
             question_input = gr.Textbox(
                 label="输入你的问题（自然语言）",
@@ -638,6 +681,106 @@ with gr.Blocks(
             )
 
         # 注：click/submit 事件在 history_table 定义之后统一注册（见文件末尾）
+
+    # ========== Tab: 智能分析（多 Agent 流程）==========
+    with gr.Tab("🧠 多Agent智能分析"):
+        gr.Markdown(
+            "**多 Agent 全流程**：Planner → SQL Agent → Chart Agent → Summary Agent → LLM-as-Judge"
+        )
+
+        with gr.Row():
+            analysis_input = gr.Textbox(
+                label="输入分析问题",
+                placeholder="例如：上个月各商品的销售趋势如何？",
+                lines=2,
+                scale=5,
+            )
+            analysis_btn = gr.Button("🧠 分析", variant="primary", scale=1, min_width=80)
+
+        analysis_loading = gr.HTML(value="", visible=False)
+        analysis_status = gr.Textbox(label="执行状态", interactive=False, elem_classes=["status-box"])
+
+        # 思考过程面板（折叠，默认展开）
+        with gr.Accordion("🔄 思考过程（Agent 执行日志）", open=True):
+            analysis_process = gr.Textbox(
+                label="",
+                interactive=False,
+                lines=10,
+                placeholder="分析完成后，这里将显示各 Agent 的决策过程...",
+            )
+
+        with gr.Row():
+            analysis_sql = gr.Code(label="📝 生成的 SQL", language="sql", scale=1)
+
+        analysis_df = gr.Dataframe(label="📊 查询数据", wrap=True)
+        analysis_chart = gr.Plot(label="📈 数据图表")
+        analysis_summary = gr.Textbox(label="💡 分析结论", interactive=False, lines=4)
+        analysis_scores = gr.HTML(label="🏅 质量评分（LLM-as-Judge）", value="<div style='padding:10px'>—</div>")
+
+        def do_analysis(question):
+            if not question.strip():
+                return "", "⚠️ 请输入问题", "", pd.DataFrame(), None, "", "<div>—</div>", load_query_history()
+            try:
+                pipeline = get_pipeline()
+                state = pipeline.invoke({"question": question})
+
+                sql_results = state.get("sql_results", [])
+
+                # SQL
+                first_sql = sql_results[0].get("sql", "") if sql_results else ""
+
+                # 状态
+                success = any(r.get("success") for r in sql_results)
+                if success:
+                    status = f"✅ 成功（共 {len(sql_results)} 个子查询）"
+                    if state.get("error"):
+                        status += f" | ⚠️ {state['error']}"
+                else:
+                    err = sql_results[0].get("error", "未知错误") if sql_results else state.get("error", "无结果")
+                    status = f"❌ 失败：{err}"
+
+                # 思考过程日志
+                process_entries = state.get("process_log") or []
+                process_text = "\n\n".join(process_entries) if process_entries else "（无日志）"
+
+                # DataFrame
+                df = pd.DataFrame()
+                for r in sql_results:
+                    if r.get("success") and r.get("data"):
+                        df = pd.DataFrame(r["data"])
+                        break
+
+                # 图表
+                chart_fig = None
+                chart_json = state.get("chart_json", "")
+                if chart_json:
+                    try:
+                        import plotly.io as pio
+                        chart_fig = pio.from_json(chart_json)
+                    except Exception:
+                        chart_fig = None
+
+                # 结论
+                summary = state.get("summary", "")
+
+                # 质量评分
+                scores_html = _render_judge_scores(state.get("judge_scores", {}))
+
+                return first_sql, status, process_text, df, chart_fig, summary, scores_html, load_query_history()
+
+            except Exception as e:
+                return "", f"❌ 分析失败: {e}", f"❌ 异常：{e}", pd.DataFrame(), None, "", "<div>—</div>", load_query_history()
+
+        def _start_analysis():
+            return (
+                gr.update(visible=True, value="<div style='padding:10px;color:#666'>⏳ 多 Agent 分析中（Planner → SQL → Chart → Summary → Judge）...</div>"),
+                gr.update(interactive=False),
+            )
+
+        def _end_analysis():
+            return gr.update(visible=False), gr.update(interactive=True)
+
+        # 注：事件绑定在 history_table 定义后统一注册（见下方）
 
     # ========== Tab: 配置管理 ==========
     with gr.Tab("⚙️ 配置管理"):
@@ -801,6 +944,20 @@ with gr.Blocks(
         ).then(
             fn=end_loading,
             outputs=[loading_html, query_btn],
+        )
+
+    # ========== 智能分析按钮事件（在 history_table 定义后注册）==========
+    for _atrigger in [analysis_btn.click, analysis_input.submit]:
+        _atrigger(
+            fn=_start_analysis,
+            outputs=[analysis_loading, analysis_btn],
+        ).then(
+            fn=do_analysis,
+            inputs=[analysis_input],
+            outputs=[analysis_sql, analysis_status, analysis_process, analysis_df, analysis_chart, analysis_summary, analysis_scores, history_table],
+        ).then(
+            fn=_end_analysis,
+            outputs=[analysis_loading, analysis_btn],
         )
 
     # ========== Tab: 表白名单 ==========
