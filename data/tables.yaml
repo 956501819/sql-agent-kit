@@ -1,0 +1,10 @@
+allowed_tables:
+- users
+- orders
+- order_items
+- products
+- categories
+- ad_campaigns
+- user_behavior
+- product_reviews
+- inventory_log

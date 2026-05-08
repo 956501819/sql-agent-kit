@@ -1,0 +1,90 @@
+tables:
+  users:
+    description: 用户基本信息表
+    columns:
+      id: 用户ID，主键
+      name: 用户姓名
+      email: 用户邮箱地址
+      phone: 用户手机号码
+      created_at: 账号注册时间
+  orders:
+    description: 订单主表，记录用户订单基础信息
+    columns:
+      id: 订单ID，主键
+      user_id: 下单用户ID
+      status: 订单状态（如：pending=待付款, paid=已付款, shipped=已发货, completed=已完成, cancelled=已取消）
+      total_amount: 订单总金额
+      created_at: 订单创建时间
+      updated_at: 订单最后更新时间
+  order_items:
+    description: 订单明细表，记录订单中包含的商品信息
+    columns:
+      id: 订单明细ID，主键
+      order_id: 关联的订单ID
+      product_id: 关联的商品ID
+      quantity: 购买商品数量
+      unit_price: 购买时的商品单价
+  products:
+    description: 商品信息表
+    columns:
+      id: 商品ID，主键
+      name: 商品名称
+      category_id: 所属商品分类ID
+      price: 商品销售价格
+      stock: 商品当前库存数量
+      created_at: 商品创建时间
+  categories:
+    description: 商品分类表，支持树形层级结构
+    columns:
+      id: 分类ID，主键
+      name: 分类名称
+      parent_id: 父级分类ID，为空表示顶级分类
+      created_at: 分类创建时间
+  ad_campaigns:
+    description: 广告投放活动效果统计表
+    columns:
+      id: 广告活动ID，主键
+      channel: 广告投放渠道（如：douyin=抖音, xiaohongshu=小红书, baidu=百度）
+      campaign: 广告活动名称
+      start_date: 投放开始日期
+      end_date: 投放结束日期
+      budget: 广告预算金额
+      spend: 广告实际花费金额
+      impressions: 广告曝光量
+      clicks: 广告点击量
+      orders: 广告带来的订单转化数
+      revenue: 广告带来的收入金额
+      created_at: 记录创建时间
+  user_behavior:
+    description: 用户行为日志表，记录用户在端上的操作轨迹
+    columns:
+      id: 行为记录ID，主键
+      user_id: 操作用户ID
+      session_id: 用户会话ID
+      action: 用户行为类型（如：view_home=访问首页, view_product=查看商品, add_cart=加入购物车, purchase=购买）
+      product_id: 操作关联的商品ID，无关联商品时为空
+      page: 访问的页面路径
+      duration_s: 页面停留时长（秒）
+      device: 访问设备类型（如：mobile=移动端, pc=PC端）
+      created_at: 行为发生时间
+  product_reviews:
+    description: 商品评价表
+    columns:
+      id: 评价ID，主键
+      product_id: 评价的商品ID
+      user_id: 评价的用户ID
+      order_id: 评价关联的订单ID
+      rating: 评分等级（1-5星，1=非常差, 5=非常好）
+      tag: 评价标签（如：描述不符, 性价比高, 质量好, 物流快）
+      content: 评价具体内容，为空表示未填写文字评价
+      created_at: 评价创建时间
+  inventory_log:
+    description: 商品库存变更流水表
+    columns:
+      id: 库存变更记录ID，主键
+      product_id: 变更的商品ID
+      change_type: 库存变更类型（如：sale=销售出库, restock=入库补货, return=退货入库）
+      quantity: 库存变更数量（正数为增加，负数为减少）
+      stock_after: 变更后的库存数量
+      remark: 库存变更备注说明
+      created_at: 库存变更时间

@@ -1,6 +1,0 @@
-allowed_tables:
-- users
-- categories
-- products
-- orders
-- order_items

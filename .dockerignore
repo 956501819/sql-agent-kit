@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Node
+frontend/node_modules/
+frontend/.vite/
+
+# Runtime data (mount as volumes instead)
+.env
+logs/
+data/fewshot.json
+
+# Dev artifacts
+web/
+*.md
+.git/
+.gitignore
+tests/
+docs/
+examples/
+
+# Misc
+.DS_Store
+*.swp

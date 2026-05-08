@@ -1,5 +1,6 @@
 import json
 import os
+import fcntl
 from datetime import datetime
 from pathlib import Path
 
@@ -27,6 +28,8 @@ class QueryLogger:
         retry_count: int = 0,
         confidence: float = 1.0,
         judge_scores: dict = None,
+        summary: str = "",
+        chart_json: str = "",
     ):
         record = {
             "ts": datetime.now().isoformat(),
@@ -40,5 +43,13 @@ class QueryLogger:
         }
         if judge_scores:
             record["judge_scores"] = judge_scores
+        if summary:
+            record["summary"] = summary
+        if chart_json:
+            record["chart_json"] = chart_json
         with open(self._path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)

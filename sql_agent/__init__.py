@@ -10,7 +10,7 @@ import os
 import yaml
 from dotenv import load_dotenv
 
-from .agent.core import SQLAgent, QueryResult
+from .single.core import SQLAgent, QueryResult
 from .llm import get_llm_client
 from .schema.loader import SchemaLoader
 from .schema.annotator import SchemaAnnotator
@@ -22,6 +22,7 @@ from .graph.pipeline import build_pipeline
 
 def build_agent(
     config_dir: str = "./config",
+    data_dir: str = "./data",
     env_file: str = ".env",
 ) -> SQLAgent:
     """
@@ -32,8 +33,8 @@ def build_agent(
 
     # 读取配置文件
     settings_path = os.path.join(config_dir, "settings.yaml")
-    tables_path = os.path.join(config_dir, "tables.yaml")
-    annotations_path = os.path.join(config_dir, "schema_annotations.yaml")
+    tables_path = os.path.join(data_dir, "tables.yaml")
+    annotations_path = os.path.join(data_dir, "schema_annotations.yaml")
 
     with open(settings_path, "r", encoding="utf-8") as f:
         settings = yaml.safe_load(f)

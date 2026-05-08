@@ -5,12 +5,12 @@ LangGraph Pipeline — 多 Agent 编排
 
 from langgraph.graph import StateGraph, END
 
-from sql_agent.agents.state import GraphState
-from sql_agent.agents.planner import planner_node
-from sql_agent.agents.sql_node import sql_node
-from sql_agent.agents.chart import chart_node
-from sql_agent.agents.summary import summary_node
-from sql_agent.agents.judge import judge_node
+from sql_agent.multi.state import GraphState
+from sql_agent.multi.planner import planner_node
+from sql_agent.multi.sql_node import sql_node
+from sql_agent.multi.chart import chart_node
+from sql_agent.multi.summary import summary_node
+from sql_agent.multi.judge import judge_node
 
 
 def _route_after_sql(state: GraphState) -> str:

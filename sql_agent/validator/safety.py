@@ -43,8 +43,11 @@ class SafetyValidator:
         sql_no_comment = re.sub(r"--[^\n]*", "", sql_no_comment)
         first_token = sql_no_comment.strip().split()[0].upper() if sql_no_comment.strip() else ""
 
-        if first_token != "SELECT":
+        if first_token not in ("SELECT", "WITH"):
             return False, f"只允许 SELECT 查询，检测到操作类型: {first_token}"
+
+        # WITH 开头时，确保整个语句是只读的 CTE（不含写操作关键词）
+        # 危险关键词检查在下方统一处理
 
         # 检查危险关键词
         match = _FORBIDDEN_RE.search(sql)
