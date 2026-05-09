@@ -28,11 +28,15 @@
         <div class="label">生成的 SQL
           <span class="hint-text">（可直接编辑后重新执行）</span>
         </div>
-        <SqlDisplay :sql="editableSql" :editable="true" @update:sql="editableSql = $event" />
+        <SqlDisplay
+          :sql="editableSql"
+          :editable="true"
+          :intent="question"
+          :chart-hint="result?.chart_hint || {}"
+          @update:sql="editableSql = $event"
+          @result="onSqlResult"
+        />
         <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
-          <button class="btn btn--primary btn--sm" :disabled="rerunLoading" @click="rerunSql">
-            {{ rerunLoading ? '执行中...' : '▶ 执行 SQL' }}
-          </button>
           <button class="btn btn--ghost btn--sm" @click="editableSql = result.sql">还原</button>
           <span v-if="rerunError" class="error-hint">{{ rerunError }}</span>
         </div>
@@ -50,12 +54,6 @@
         </div>
         <ResultTable :data="displayData" />
       </div>
-
-      <!-- 图表（手动执行后展示） -->
-      <div v-if="rerunChart" style="margin-top:16px">
-        <div class="label">📈 数据图表</div>
-        <PlotlyChart :chart-data="rerunChart" />
-      </div>
     </div>
 
     <div v-if="error" class="alert alert--error">{{ error }}</div>
@@ -63,22 +61,19 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
-import { queryApi, runSqlApi } from '../api/index.js'
+import { ref, computed, shallowRef } from 'vue'
+import { queryApi } from '../api/index.js'
 import SqlDisplay from '../components/SqlDisplay.vue'
 import ResultTable from '../components/ResultTable.vue'
 import ConfidenceBar from '../components/ConfidenceBar.vue'
-import PlotlyChart from '../components/PlotlyChart.vue'
 
 const question = ref('')
 const loading = ref(false)
 const result = ref(null)
 const error = ref('')
 const editableSql = ref('')
-const rerunLoading = ref(false)
-const rerunResult = ref(null)
+const rerunResult = shallowRef(null)
 const rerunError = ref('')
-const rerunChart = ref(null)
 
 const statusTag = ref('tag--info')
 const statusText = ref('')
@@ -90,7 +85,6 @@ async function runQuery() {
   loading.value = true
   result.value = null
   rerunResult.value = null
-  rerunChart.value = null
   rerunError.value = ''
   error.value = ''
 
@@ -108,24 +102,13 @@ async function runQuery() {
   }
 }
 
-async function rerunSql() {
-  if (!editableSql.value.trim() || rerunLoading.value) return
-  rerunLoading.value = true
-  rerunError.value = ''
-  rerunChart.value = null
-  try {
-    const { data } = await runSqlApi.run(editableSql.value.trim(), question.value)
-    if (!data.success) {
-      rerunError.value = data.error || '执行失败'
-    } else {
-      rerunResult.value = data
-      rerunChart.value = data.chart || null
-    }
-  } catch (e) {
-    rerunError.value = e.response?.data?.detail || e.message
-  } finally {
-    rerunLoading.value = false
+function onSqlResult(data) {
+  if (!data.success) {
+    rerunError.value = data.error || '执行失败'
+    return
   }
+  rerunError.value = ''
+  rerunResult.value = data
 }
 </script>
 

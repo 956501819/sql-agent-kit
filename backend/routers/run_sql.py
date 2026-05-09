@@ -27,19 +27,16 @@ async def run_sql(req: RunSqlRequest):
     agent = get_agent()
 
     # 直接执行 SQL
-    try:
-        rows = agent.db.execute(req.sql)
-        if rows is None:
-            rows = []
-        data = [dict(r) for r in rows] if rows else []
-    except Exception as e:
+    success, data_or_error = agent._runner.run(req.sql)
+    if not success:
         return JSONResponse(sanitize({
             "success": False,
             "sql": req.sql,
             "data": [],
             "chart": None,
-            "error": str(e),
+            "error": data_or_error,
         }))
+    data = data_or_error or []
 
     # 生成图表
     chart_obj = None

@@ -71,7 +71,9 @@
             <SqlDisplay
               :sql="currentResult.sql"
               :editable="!streaming"
-              @run="(sql) => handleRunSql(sql, activeTab)"
+              :intent="result?.intent || question"
+              :chart-hint="chartHint"
+              @result="(d) => handleSqlResult(d, activeTab)"
             />
           </div>
           <div v-else class="placeholder">{{ streaming ? '等待 SQL 生成...' : '无 SQL' }}</div>
@@ -133,7 +135,7 @@
 
 <script setup>
 import { ref, computed, onUnmounted } from 'vue'
-import { analysisApi, suggestionsApi, runSqlApi } from '../api/index.js'
+import { analysisApi, suggestionsApi } from '../api/index.js'
 import ProcessLog from '../components/ProcessLog.vue'
 import JudgeScores from '../components/JudgeScores.vue'
 import SqlDisplay from '../components/SqlDisplay.vue'
@@ -177,28 +179,17 @@ async function fetchSuggestions() {
   }
 }
 
-async function handleRunSql(sql, tabIndex) {
+async function handleSqlResult(data, tabIndex) {
   tabSqlErrors.value = { ...tabSqlErrors.value, [tabIndex]: '' }
-  try {
-    const { data } = await runSqlApi.run(sql, result.value?.intent || question.value, chartHint.value)
-    if (data.success) {
-      // 更新对应 tab 的数据
-      const updated = [...sqlResults.value]
-      updated[tabIndex] = { ...updated[tabIndex], data: data.data || [], sql, success: true, error: '' }
-      sqlResults.value = updated
-      // 如果是图表对应的 tab，同步更新图表
-      if (tabIndex === chartSourceIndex.value) {
-        chartData.value = data.chart || null
-      }
-    } else {
-      tabSqlErrors.value = { ...tabSqlErrors.value, [tabIndex]: data.error || '执行失败' }
-      // 修复2：SQL 执行失败时清空对应 tab 的图表，避免旧图表和错误同时显示
-      if (tabIndex === chartSourceIndex.value) {
-        chartData.value = null
-      }
+  if (data.success) {
+    const updated = [...sqlResults.value]
+    updated[tabIndex] = { ...updated[tabIndex], data: data.data || [], sql: data.sql, success: true, error: '' }
+    sqlResults.value = updated
+    if (tabIndex === chartSourceIndex.value) {
+      chartData.value = data.chart || null
     }
-  } catch (e) {
-    tabSqlErrors.value = { ...tabSqlErrors.value, [tabIndex]: e.response?.data?.detail || e.message }
+  } else {
+    tabSqlErrors.value = { ...tabSqlErrors.value, [tabIndex]: data.error || '执行失败' }
     if (tabIndex === chartSourceIndex.value) {
       chartData.value = null
     }

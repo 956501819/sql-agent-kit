@@ -25,6 +25,7 @@ app.include_router(tables.router, prefix="/api")
 app.include_router(annotations.router, prefix="/api")
 app.include_router(params.router, prefix="/api")
 app.include_router(suggestions.router, prefix="/api")
+app.include_router(run_sql.router, prefix="/api")
 
 # Serve Vue SPA static assets
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")

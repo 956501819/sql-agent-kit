@@ -2,10 +2,11 @@
   <div class="sql-editor-wrap">
     <textarea
       v-if="editable"
-      v-model="localSql"
+      :value="localSql"
       class="sql-textarea"
       spellcheck="false"
       rows="6"
+      @input="onInput"
     />
     <pre v-else class="sql-block"><code>{{ sql }}</code></pre>
     <div v-if="editable" class="sql-actions">
@@ -25,9 +26,10 @@ const props = defineProps({
   sql: String,
   editable: { type: Boolean, default: false },
   intent: { type: String, default: '' },
+  chartHint: { type: Object, default: () => ({}) },
 })
 
-const emit = defineEmits(['result'])
+const emit = defineEmits(['result', 'update:sql'])
 
 const localSql = ref(props.sql || '')
 const running = ref(false)
@@ -35,12 +37,17 @@ const execError = ref('')
 
 watch(() => props.sql, (v) => { localSql.value = v || '' })
 
+function onInput(e) {
+  localSql.value = e.target.value
+  emit('update:sql', localSql.value)
+}
+
 async function runSql() {
   if (!localSql.value.trim() || running.value) return
   running.value = true
   execError.value = ''
   try {
-    const { data } = await runSqlApi.run(localSql.value.trim(), props.intent)
+    const { data } = await runSqlApi.run(localSql.value.trim(), props.intent, props.chartHint)
     if (!data.success) {
       execError.value = data.error || '执行失败'
     }
