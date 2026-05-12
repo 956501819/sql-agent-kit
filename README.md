@@ -5,7 +5,12 @@
 作者联系邮箱：ly956501819@foxmail.com
 作者联系微信：ly956501819
 
-![Web UI 截图](docs/images/screenshot003.png)
+<video src='https://github.com/user-attachments/assets/53503102-c8ab-4dd0-aa3b-38383ea60be2
+' 
+       controls='controls' 
+       width='100%'>
+    抱歉，您的浏览器不支持内嵌视频。
+</video>
 ![Web UI 截图](docs/images/screenshot004.png)
 
 > 输入"上个月各商品的销售趋势如何？"，多 Agent 流水线自动完成意图拆解 → SQL 生成 → 图表渲染 → 结论分析 → 质量评估。

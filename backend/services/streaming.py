@@ -45,7 +45,7 @@ _executor = ThreadPoolExecutor(max_workers=4)
 logger = logging.getLogger(__name__)
 
 # 整个管道的最长运行时间（秒），超时后强制终止
-PIPELINE_TIMEOUT = 120
+PIPELINE_TIMEOUT = 240
 
 
 # -----------------------------------------------------------------------------

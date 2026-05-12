@@ -4,7 +4,7 @@ agent:
   max_tables_in_prompt: 10
 executor:
   max_rows: 500
-  query_timeout: 30
+  query_timeout: 60
 feedback:
   enabled: true
   log_path: ./logs/queries.jsonl

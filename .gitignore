@@ -36,5 +36,12 @@ ENV/
 *.swp
 *.swo
 
+# ===== Cursor / Claude =====
+.cursor/
+.claude/
+
+# ===== OpenSpec =====
+openspec/
+
 # ===== macOS =====
 .DS_Store
