@@ -14,7 +14,6 @@ router = APIRouter()
 class RunSqlRequest(BaseModel):
     sql: str
     intent: str = ""        # 可选，用于图表生成时匹配 Y 轴
-    chart_hint: dict = {}   # 可选，传入原始 chart_hint 保持图表类型一致
 
 
 @router.post("/run-sql")
@@ -38,20 +37,17 @@ async def run_sql(req: RunSqlRequest):
         }))
     data = data_or_error or []
 
-    # 生成图表
+    # 生成图表（纯规则推断，不依赖外部 hint）
     chart_obj = None
     if data:
         try:
             df = pd.DataFrame(data)
-            hint = req.chart_hint or {}
-            chart_type = _infer_chart_type(df, hint.get("type", ""))
+            chart_type = _infer_chart_type(df, req.intent)
             if chart_type != "table":
                 import json
-                from sql_agent.multi.chart import _parse_hint
                 chart_json = _build_figure(
                     df, chart_type,
                     title=req.intent or req.sql[:60],
-                    hint=_parse_hint(hint),
                     intent=req.intent,
                 )
                 if chart_json:

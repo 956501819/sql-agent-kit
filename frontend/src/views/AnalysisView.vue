@@ -72,7 +72,6 @@
               :sql="currentResult.sql"
               :editable="!streaming"
               :intent="result?.intent || question"
-              :chart-hint="chartHint"
               @result="(d) => handleSqlResult(d, activeTab)"
             />
           </div>
@@ -148,7 +147,6 @@ const started = ref(false)
 const result = ref(null)
 const chartData = ref(null)
 const chartSourceIndex = ref(0)
-const chartHint = ref({})        // 保存 planner 的 chart_hint，供重跑 SQL 时使用
 const sqlResults = ref([])       // 所有子问题结果
 const activeTab = ref(0)         // 当前激活的 tab
 const tabSqlErrors = ref({})     // 每个 tab 手动重跑 SQL 的错误
@@ -220,13 +218,25 @@ function startAnalysis() {
     }
   })
 
+  es.addEventListener('sql_result', (e) => {
+    try {
+      const parsed = JSON.parse(e.data)
+      if (parsed.sql_results?.length) {
+        sqlResults.value = parsed.sql_results
+        // 增量数据先到，提前显示表格（不等待 result 事件）
+        if (!result.value) {
+          result.value = { sql_results: parsed.sql_results }
+        }
+      }
+    } catch {}
+  })
+
   es.addEventListener('chart', (e) => {
     try {
       const parsed = JSON.parse(e.data)
       chartData.value = parsed.chart || null
       if (parsed.chart_source_index !== undefined) {
         chartSourceIndex.value = parsed.chart_source_index
-        // 修复4：不强制切换 activeTab，只在用户还没手动切换时（仍在 tab 0）才跟随
         if (activeTab.value === 0) {
           activeTab.value = parsed.chart_source_index
         }
@@ -238,14 +248,11 @@ function startAnalysis() {
     try {
       const parsed = JSON.parse(e.data)
       result.value = parsed
-      if (parsed.sql_results?.length) {
+      // 只更新 summary/judge_scores/error，sql_results 优先使用增量事件的版本
+      if (parsed.sql_results?.length && !sqlResults.value.length) {
         sqlResults.value = parsed.sql_results
-        chartSourceIndex.value = parsed.chart_source_index ?? 0
       }
-      // 保存 chart_hint 供重跑 SQL 时使用（修复3）
-      if (parsed.chart_hint) {
-        chartHint.value = parsed.chart_hint
-      }
+      chartSourceIndex.value = parsed.chart_source_index ?? 0
     } catch (err) {
       console.error('result parse error:', err, e.data?.slice(0, 200))
     }

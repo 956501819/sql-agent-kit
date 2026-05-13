@@ -26,7 +26,6 @@ const props = defineProps({
   sql: String,
   editable: { type: Boolean, default: false },
   intent: { type: String, default: '' },
-  chartHint: { type: Object, default: () => ({}) },
 })
 
 const emit = defineEmits(['result', 'update:sql'])
@@ -47,7 +46,7 @@ async function runSql() {
   running.value = true
   execError.value = ''
   try {
-    const { data } = await runSqlApi.run(localSql.value.trim(), props.intent, props.chartHint)
+    const { data } = await runSqlApi.run(localSql.value.trim(), props.intent)
     if (!data.success) {
       execError.value = data.error || '执行失败'
     }

@@ -32,7 +32,6 @@
           :sql="editableSql"
           :editable="true"
           :intent="question"
-          :chart-hint="result?.chart_hint || {}"
           @update:sql="editableSql = $event"
           @result="onSqlResult"
         />

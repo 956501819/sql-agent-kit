@@ -1,16 +1,22 @@
 """
 LangGraph Pipeline — 多 Agent 编排
-构建 Planner → SQL → Chart → Summary → Judge 的有向图
+构建 Classifier → (Planner?) → SQL → Chart → Summary → Judge 的有向图
 """
 
 from langgraph.graph import StateGraph, END
 
 from sql_agent.multi.state import GraphState
+from sql_agent.multi.classifier import classifier_node
 from sql_agent.multi.planner import planner_node
 from sql_agent.multi.sql_node import sql_node
 from sql_agent.multi.chart import chart_node
 from sql_agent.multi.summary import summary_node
 from sql_agent.multi.judge import judge_node
+
+
+def _route_after_classifier(state: GraphState) -> str:
+    """分类器后的路由：简单问题跳过 Planner，否则进入 Planner"""
+    return "skip" if state.get("skip_planner") else "plan"
 
 
 def _route_after_sql(state: GraphState) -> str:
@@ -25,19 +31,27 @@ def build_pipeline():
     构建并编译 LangGraph 多 Agent Pipeline
 
     图结构：
-        planner → sql_agent
-                       ↓ (ok)    → chart_agent → summary_agent → judge_agent → END
-                       ↓ (error) → END
+        classifier ─(skip)→ sql_agent
+              ↓ (plan)
+           planner ───→ sql_agent
+                           ↓ (ok)    → chart_agent → summary_agent → judge_agent → END
+                           ↓ (error) → END
     """
     graph = StateGraph(GraphState)
 
+    graph.add_node("classifier", classifier_node)
     graph.add_node("planner", planner_node)
     graph.add_node("sql_agent", sql_node)
     graph.add_node("chart_agent", chart_node)
     graph.add_node("summary_agent", summary_node)
     graph.add_node("judge_agent", judge_node)
 
-    graph.set_entry_point("planner")
+    graph.set_entry_point("classifier")
+    graph.add_conditional_edges(
+        "classifier",
+        _route_after_classifier,
+        {"skip": "sql_agent", "plan": "planner"},
+    )
     graph.add_edge("planner", "sql_agent")
     graph.add_conditional_edges(
         "sql_agent",

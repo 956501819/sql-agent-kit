@@ -10,9 +10,11 @@ class GraphState(TypedDict, total=False):
     # 用户输入
     question: str
 
+    # 前置分类
+    skip_planner: bool     # 简单问题时跳过 Planner，直接进入 SQL Agent
+
     # Planner 输出
     intent: str           # 意图摘要，如"分析上月销售趋势"
-    chart_hint: dict       # 结构化图表指令：{type, x, y, y2, sort, label}
     sub_questions: List[str]   # 拆解后的子问题列表（单问题时 = [question]）
 
     # SQL Agent 输出

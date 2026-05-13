@@ -14,12 +14,14 @@ _SYSTEM_PROMPT = """你是一个 AI 输出质量评审专家。
 请对以下数据分析流程的输出质量进行评分（每项 0-10 分），输出 JSON 格式，不要解释。
 
 评分维度：
-- sql_correctness: SQL 是否准确回答了用户问题（语义正确性）
-- chart_fitness: 图表类型是否适合展示该数据（无图表时评 5）
-- summary_quality: 分析结论是否准确、清晰、有价值
+- sql_correctness: SQL 是否准确回答了用户问题（参考统计摘要判断数据是否合理）
+- chart_fitness: 图表类型是否适合展示该数据（参考统计摘要判断数据特征与图表匹配度，无图表时评 5）
+- summary_quality: 分析结论是否准确、清晰、有价值（参考统计摘要验证关键数字是否一致）
 
 输出格式：
 {"sql_correctness": 8, "chart_fitness": 9, "summary_quality": 7}
+
+注意：利用下方的"数据统计摘要"来客观评估——检查 SQL 是否查到了合理的数据分布，图表类型是否与数据特征匹配，结论中的数字是否与统计摘要一致。
 """
 
 
@@ -30,6 +32,31 @@ def _resolve_log_path(raw_path: str) -> str:
     # __file__ = sql_agent/agents/judge.py → ../../ = 项目根
     repo_root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
     return os.path.normpath(os.path.join(repo_root, raw_path))
+
+
+def _build_statistical_summary(sql_results: list) -> str:
+    """为每个成功的 SQL 结果生成 pandas describe() 统计摘要。"""
+    import pandas as pd
+
+    parts = []
+    for i, r in enumerate(sql_results, 1):
+        if not (r.get("success") and r.get("data")):
+            continue
+        try:
+            df = pd.DataFrame(r["data"])
+            if df.empty:
+                continue
+            numeric_cols = df.select_dtypes(include="number").columns.tolist()
+            if not numeric_cols:
+                parts.append(f"子问题 {i}：无数值列，未生成统计摘要")
+                continue
+            desc = df[numeric_cols].describe()
+            parts.append(
+                f"子问题 {i} 统计摘要（{r.get('question', '')}）：\n{desc.to_string()}"
+            )
+        except Exception:
+            parts.append(f"子问题 {i}：统计摘要生成失败")
+    return "\n\n".join(parts) if parts else "无有效数据，未生成统计摘要"
 
 
 def judge_node(state: GraphState) -> GraphState:
@@ -60,10 +87,15 @@ def judge_node(state: GraphState) -> GraphState:
         except Exception:
             chart_type = "已生成图表"
 
+    # 生成统计摘要
+    stats_summary = _build_statistical_summary(sql_results)
+    log.append("   📊 已生成数据统计摘要")
+
     user_content = (
         f"用户问题：{question}\n\n"
         f"生成的 SQL：\n{first_sql}\n\n"
         f"数据预览（前3行）：{first_data_preview}\n\n"
+        f"数据统计摘要：\n{stats_summary}\n\n"
         f"图表类型：{chart_type}\n\n"
         f"分析结论：{summary}"
     )

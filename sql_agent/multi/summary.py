@@ -23,7 +23,6 @@ def summary_node(state: GraphState) -> GraphState:
     question = state.get("question", "")
     intent = state.get("intent", question)
     sql_results = state.get("sql_results", [])
-    chart_hint = state.get("chart_hint", "table")
     log = list(state.get("process_log") or [])
     log.append("📝 [Summary Agent] 正在生成分析结论...")
 
@@ -46,12 +45,10 @@ def summary_node(state: GraphState) -> GraphState:
         }
 
     data_summary = "\n\n".join(data_summary_parts)
-    chart_type_text = f"数据以{chart_hint}图形式呈现。" if chart_hint != "table" else ""
 
     user_content = (
         f"用户问题：{question}\n"
-        f"分析意图：{intent}\n"
-        f"{chart_type_text}\n\n"
+        f"分析意图：{intent}\n\n"
         f"查询结果：\n{data_summary}"
     )
 

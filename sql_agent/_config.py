@@ -25,3 +25,19 @@ def load_settings(config_dir: str = "./config", env_file: str = ".env") -> dict:
     settings_path = os.path.join(config_dir, "settings.yaml")
     with open(settings_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def load_table_names(data_dir: str = "./data") -> list:
+    """从 tables.yaml 加载白名单表名列表"""
+    data_dir = os.environ.get("SQL_AGENT_DATA_DIR", data_dir)
+
+    if not os.path.isabs(data_dir) and not os.path.exists(data_dir):
+        here = os.path.dirname(__file__)
+        candidate = os.path.join(here, "..", data_dir)
+        if os.path.exists(candidate):
+            data_dir = candidate
+
+    tables_path = os.path.join(data_dir, "tables.yaml")
+    with open(tables_path, "r", encoding="utf-8") as f:
+        tables_config = yaml.safe_load(f)
+    return tables_config.get("allowed_tables", [])

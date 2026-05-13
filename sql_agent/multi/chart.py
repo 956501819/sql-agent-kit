@@ -1,32 +1,33 @@
 """
 Chart Agent — 根据查询结果自动选图表并生成 plotly JSON
-Planner 输出结构化 chart_hint（type/x/y/y2/sort/label），Chart Agent 优先按指令画图，
-无指令时回退到规则推断。
+纯规则推断：基于 DataFrame 列类型和意图自动决定图表类型和轴映射
 """
 
 from .state import GraphState
 
 
-def _parse_hint(chart_hint) -> dict:
-    """统一 chart_hint 格式，兼容旧版字符串和新版 dict。"""
-    if isinstance(chart_hint, dict):
-        return chart_hint
-    return {"type": chart_hint or "table", "x": "", "y": "", "y2": "", "sort": "none", "label": False}
+def _is_homogeneous(numeric_cols: list) -> bool:
+    """判断数值列是否属于同类指标（可堆叠），或不同量纲（应分组展示）。"""
+    _AMOUNT_KWS = ["spend", "cost", "revenue", "amount", "price", "sales", "花费", "收入", "金额", "销售额"]
+    _COUNT_KWS = ["count", "orders", "users", "num", "qty", "quantity", "数量", "订单", "人数"]
+    _RATE_KWS = ["rate", "ratio", "pct", "percent", "roi", "ctr", "cvr", "率", "比", "转化"]
+
+    types = set()
+    for col in numeric_cols:
+        col_lower = col.lower()
+        if any(kw in col_lower for kw in _RATE_KWS):
+            types.add("rate")
+        elif any(kw in col_lower for kw in _AMOUNT_KWS):
+            types.add("amount")
+        elif any(kw in col_lower for kw in _COUNT_KWS):
+            types.add("count")
+        else:
+            types.add("other")
+    return len(types) <= 1
 
 
-def _resolve_col(hint_col: str, candidates: list, df) -> str:
-    """将 hint 中的列名映射到 df 实际列名（大小写不敏感，找不到返回空）。"""
-    if not hint_col:
-        return ""
-    cols_lower = {c.lower(): c for c in df.columns}
-    return cols_lower.get(hint_col.lower(), "")
-
-
-def _infer_chart_type(df, hint_type: str) -> str:
-    """根据 DataFrame 列类型推断图表类型（仅在 hint_type 为空或 table 时触发）。"""
-    if hint_type and hint_type != "table":
-        return hint_type
-
+def _infer_chart_type(df, intent: str) -> str:
+    """根据 DataFrame 列类型和用户意图推断图表类型。"""
     if df is None or df.empty:
         return "table"
 
@@ -42,10 +43,18 @@ def _infer_chart_type(df, hint_type: str) -> str:
     cat_cols = [c for c in cols if c not in numeric_cols and c not in time_cols]
     effective_time_cols = [c for c in time_cols if df[c].nunique() > 1]
 
+    intent_lower = (intent or "").lower()
+    is_trend = any(kw in intent_lower for kw in ["趋势", "变化", "走势", "trend", "增长", "下降", "波动"])
+
     if effective_time_cols and numeric_cols:
         return "area" if cat_cols else "line"
     if len(cat_cols) >= 2 and len(numeric_cols) == 1:
         return "heatmap"
+
+    # 分类列唯一值过多时图表不可读，降级为表格
+    if cat_cols and df[cat_cols[0]].nunique() > 30:
+        return "table"
+
     if cat_cols and len(numeric_cols) == 1:
         if len(df) <= 6:
             return "pie"
@@ -56,41 +65,88 @@ def _infer_chart_type(df, hint_type: str) -> str:
     if time_cols and cat_cols and numeric_cols:
         return "bar_stack"
     if len(numeric_cols) >= 2 and cat_cols:
-        return "bar_stack"
-    if len(numeric_cols) == 2 and not cat_cols:
+        # 任意数值列含"率/比"关键词 → 双轴图（量和率同时展示）
+        rate_kws = ["rate", "ratio", "pct", "percent", "roi", "率", "比", "增长"]
+        has_rate_col = any(
+            any(kw in col.lower() for kw in rate_kws)
+            for col in numeric_cols
+        )
+        if has_rate_col or is_trend:
+            return "dual_axis"
+        # 量纲一致时用堆叠图，否则回退分组柱状图
+        return "bar_stack" if _is_homogeneous(numeric_cols) else "bar"
+    if len(numeric_cols) >= 2 and not cat_cols:
         return "scatter"
     if numeric_cols:
-        return "bar"
+        return "line" if is_trend else "bar"
     return "table"
 
 
-def _pick_y_col(numeric_cols: list, intent: str) -> str:
-    """从多个数值列中选出最合适的 Y 轴列（无 hint 时的兜底逻辑）。"""
+def _pick_y_col(numeric_cols: list, intent: str, chart_type: str = "") -> str:
+    """从多个数值列中选出最合适的 Y 轴列（基于意图关键词匹配）。"""
     if not numeric_cols:
         return ""
     if len(numeric_cols) == 1:
         return numeric_cols[0]
 
     import re
+
     intent_lower = (intent or "").lower()
     intent_tokens = [t for t in re.split(r'[\s,，。？?、/\\]+', intent_lower) if len(t) >= 2]
+
+    # 1. 意图关键词精确匹配列名
     for col in reversed(numeric_cols):
         col_lower = col.lower()
         if any(tok in col_lower or col_lower in tok for tok in intent_tokens):
             return col
 
-    derived_kws = ["roi", "rate", "ratio", "growth", "pct", "percent",
-                   "比", "率", "增长", "占比", "转化", "利润", "毛利", "净"]
-    for col in reversed(numeric_cols):
-        if any(kw in col.lower() for kw in derived_kws):
-            return col
+    # 2. 优先选 amount/count 类指标（rate/率/比 作为派生指标不优先做主 Y）
+    _RATE_KWS = ["rate", "ratio", "pct", "percent", "roi", "ctr", "cvr", "率", "比", "转化"]
+    non_rate = [c for c in numeric_cols if not any(kw in c.lower() for kw in _RATE_KWS)]
+    if non_rate:
+        return non_rate[0]
 
-    return numeric_cols[-1]
+    # 3. 只有 rate 类列时，取第一个
+    return numeric_cols[0]
 
 
-def _build_figure(df, chart_type: str, title: str, hint: dict, intent: str = "") -> str:
+def _pick_x_col(df, chart_type: str) -> str:
+    """根据图表类型和列类型自动选择 X 轴列。"""
+    import pandas as pd
+
+    cols = df.columns.tolist()
+    numeric_cols = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
+    time_cols = [c for c in cols if any(kw in c.lower()
+                  for kw in ["date", "time", "month", "year", "day", "日", "月", "年"])]
+    cat_cols = [c for c in cols if c not in numeric_cols and c not in time_cols]
+    effective_time_cols = [c for c in time_cols if df[c].nunique() > 1]
+
+    if chart_type in ("line", "area") and effective_time_cols:
+        return effective_time_cols[0]
+    if chart_type == "pie":
+        return cat_cols[0] if cat_cols else cols[0]
+    if cat_cols:
+        return cat_cols[0]
+    if time_cols:
+        return time_cols[0]
+    return cols[0]
+
+
+def _should_sort(chart_type: str) -> str:
+    """判断是否需要排序及排序方向。"""
+    if chart_type in ("bar", "pie", "funnel", "dual_axis"):
+        return "desc"
+    return "none"
+
+
+def _should_show_label(df) -> bool:
+    """数据点少时显示标签。"""
+    return len(df) <= 15
+
+
+def _build_figure(df, chart_type: str, title: str, intent: str = "") -> str:
     """用 plotly.express / plotly.graph_objects 生成图表 JSON。
-    hint 字段：type / x / y / y2 / sort / label
+    所有参数（x/y/sort/label）均从数据推断，不依赖外部 hint。
     出错时抛出异常，由调用方记录日志。
     """
     import plotly.express as px
@@ -104,14 +160,10 @@ def _build_figure(df, chart_type: str, title: str, hint: dict, intent: str = "")
     cat_cols = [c for c in cols if c not in numeric_cols and c not in time_cols]
     effective_time_cols = [c for c in time_cols if df[c].nunique() > 1]
 
-    hint_x = _resolve_col(hint.get("x", ""), cols, df)
-    hint_y = _resolve_col(hint.get("y", ""), cols, df)
-    hint_y2 = _resolve_col(hint.get("y2", ""), cols, df)
-    show_label = hint.get("label", False)
-    sort_order = hint.get("sort", "none")
-
-    # y_col：优先 hint，其次按意图推断，最后取最后一个数值列，实在没有取最后一列
-    y_col = hint_y or _pick_y_col(numeric_cols, intent) or (numeric_cols[-1] if numeric_cols else cols[-1])
+    x_col = _pick_x_col(df, chart_type)
+    y_col = _pick_y_col(numeric_cols, intent, chart_type) or (numeric_cols[-1] if numeric_cols else cols[-1])
+    show_label = _should_show_label(df)
+    sort_order = _should_sort(chart_type)
 
     _layout = dict(
         font=dict(family="Microsoft YaHei, Arial, sans-serif"),
@@ -139,26 +191,56 @@ def _build_figure(df, chart_type: str, title: str, hint: dict, intent: str = "")
     fig = None
 
     if chart_type == "dual_axis":
-        x_col = hint_x or (cat_cols[0] if cat_cols else (time_cols[0] if time_cols else cols[0]))
-        y2_col = hint_y2 or (numeric_cols[1] if len(numeric_cols) >= 2 else "")
-        if not y2_col:
-            # 没有第二指标，降级为普通柱状图
+        _RATE_KWS = ["rate", "ratio", "pct", "percent", "roi", "ctr", "cvr", "率", "比", "转化"]
+        # 扫描所有数值列找 rate 列作为副 Y 轴（折线）
+        rate_cols = [c for c in numeric_cols if any(kw in c.lower() for kw in _RATE_KWS)]
+        y2_col = rate_cols[0] if rate_cols else (numeric_cols[1] if len(numeric_cols) >= 2 else "")
+
+        if not y2_col or y2_col == y_col:
             chart_type = "bar"
         else:
+            df = _apply_sort(df, y_col, sort_order)
+
+            # 第三指标（若有）写入 hover 自定义数据
+            extra_cols = [c for c in numeric_cols if c not in (y_col, y2_col)]
+            extra_hover = extra_cols[0] if extra_cols else ""
+            customdata = df[[extra_hover]].values.tolist() if extra_hover else None
+
             fig = go.Figure()
-            fig.add_trace(go.Bar(
+            bar_trace = go.Bar(
                 x=df[x_col], y=df[y_col], name=y_col,
                 yaxis="y1",
                 text=[f"{v:,.0f}" for v in df[y_col]] if show_label else None,
                 textposition="outside" if show_label else None,
-            ))
-            fig.add_trace(go.Scatter(
+            )
+            if customdata:
+                bar_trace.customdata = customdata
+                bar_trace.hovertemplate = (
+                    f"{x_col}=%{{x}}<br>{y_col}=%{{y:,.0f}}"
+                    f"<br>{extra_hover}=%{{customdata[0]:,.0f}}<extra></extra>"
+                )
+            fig.add_trace(bar_trace)
+
+            # 分类 X 轴时折线无连续意义，仅显示标记点
+            is_time_x = x_col in effective_time_cols
+            line_mode = "lines+markers" if is_time_x else "markers"
+            line_mode += "+text" if show_label else ""
+
+            line_trace = go.Scatter(
                 x=df[x_col], y=df[y2_col], name=y2_col,
-                mode="lines+markers" + ("+text" if show_label else ""),
+                mode=line_mode,
                 yaxis="y2",
                 text=[f"{v:.2f}" for v in df[y2_col]] if show_label else None,
                 textposition="top center" if show_label else None,
-            ))
+            )
+            if customdata:
+                line_trace.customdata = customdata
+                line_trace.hovertemplate = (
+                    f"{x_col}=%{{x}}<br>{y2_col}=%{{y:.2f}}"
+                    f"<br>{extra_hover}=%{{customdata[0]:,.0f}}<extra></extra>"
+                )
+            fig.add_trace(line_trace)
+
             fig.update_layout(
                 title=title,
                 yaxis=dict(title=y_col),
@@ -169,11 +251,16 @@ def _build_figure(df, chart_type: str, title: str, hint: dict, intent: str = "")
             return fig.to_json()
 
     if chart_type == "line":
-        x_col = hint_x or (effective_time_cols[0] if effective_time_cols else (time_cols[0] if time_cols else cols[0]))
         df, parsed = _try_parse_datetime(df, x_col)
         df = df.sort_values(x_col)
         color_col = cat_cols[0] if cat_cols else None
-        if not parsed:
+        # 多数值列无分类时，melt 为多条折线
+        if len(numeric_cols) >= 2 and not cat_cols:
+            df_melted = df.melt(id_vars=x_col, value_vars=numeric_cols,
+                                var_name="_metric", value_name="_value")
+            fig = px.line(df_melted, x=x_col, y="_value", color="_metric",
+                          title=title, markers=True)
+        elif not parsed:
             fig = go.Figure()
             if color_col:
                 for grp, gdf in df.groupby(color_col):
@@ -190,15 +277,19 @@ def _build_figure(df, chart_type: str, title: str, hint: dict, intent: str = "")
                               mode="lines+markers+text")
 
     elif chart_type == "area":
-        x_col = hint_x or (effective_time_cols[0] if effective_time_cols else (time_cols[0] if time_cols else cols[0]))
         df, _ = _try_parse_datetime(df, x_col)
         df = df.sort_values(x_col)
         color_col = cat_cols[0] if cat_cols else None
-        fig = px.area(df, x=x_col, y=y_col, color=color_col, title=title)
+        if len(numeric_cols) >= 2 and not cat_cols:
+            df_melted = df.melt(id_vars=x_col, value_vars=numeric_cols,
+                                var_name="_metric", value_name="_value")
+            fig = px.area(df_melted, x=x_col, y="_value", color="_metric", title=title)
+        else:
+            fig = px.area(df, x=x_col, y=y_col, color=color_col, title=title)
 
     elif chart_type == "bar":
-        x_col = hint_x or (cat_cols[0] if cat_cols else (time_cols[0] if time_cols else cols[0]))
-        color_col = (time_cols[0] if time_cols and df[time_cols[0]].nunique() > 1 else None) if (not hint_x and cat_cols) else None
+        time_as_color = time_cols[0] if time_cols and df[time_cols[0]].nunique() > 1 else None
+        color_col = time_as_color if cat_cols else None
         df = _apply_sort(df, y_col, sort_order)
         fig = px.bar(df, x=x_col, y=y_col, color=color_col, title=title, barmode="group")
         if show_label:
@@ -206,33 +297,30 @@ def _build_figure(df, chart_type: str, title: str, hint: dict, intent: str = "")
 
     elif chart_type == "bar_stack":
         if cat_cols and len(numeric_cols) >= 2:
-            id_col = hint_x or cat_cols[0]
+            id_col = cat_cols[0]
             value_cols = [c for c in numeric_cols if c != id_col]
             df_melted = df.melt(id_vars=id_col, value_vars=value_cols,
                                 var_name="_metric", value_name="_value")
             fig = px.bar(df_melted, x=id_col, y="_value", color="_metric",
                          title=title, barmode="stack")
         else:
-            x_col = hint_x or (cat_cols[0] if cat_cols else (time_cols[0] if time_cols else cols[0]))
-            color_col = (time_cols[0] if time_cols else None) if cat_cols else None
+            color_col = time_cols[0] if time_cols else None
             fig = px.bar(df, x=x_col, y=y_col, color=color_col, title=title, barmode="stack")
         if show_label:
             fig.update_traces(texttemplate="%{y:,.0f}", textposition="inside")
 
     elif chart_type == "pie":
-        x_col = hint_x or (cat_cols[0] if cat_cols else cols[0])
         fig = px.pie(df, names=x_col, values=y_col, title=title)
         if show_label:
             fig.update_traces(textinfo="label+percent+value")
 
     elif chart_type == "scatter":
-        scatter_x = hint_x or (numeric_cols[0] if len(numeric_cols) >= 2 else cols[0])
-        scatter_y = hint_y or (numeric_cols[1] if len(numeric_cols) >= 2 else cols[1])
+        scatter_x = numeric_cols[0] if len(numeric_cols) >= 2 else cols[0]
+        scatter_y = numeric_cols[1] if len(numeric_cols) >= 2 else cols[1]
         color_col = cat_cols[0] if cat_cols else None
         fig = px.scatter(df, x=scatter_x, y=scatter_y, color=color_col, title=title)
 
     elif chart_type == "funnel":
-        # 情况1：单行宽表（1行×N数值列） → 转置为长表，画标准漏斗
         if len(df) == 1 and not cat_cols and len(numeric_cols) >= 2:
             step_col = "step"
             val_col = "value"
@@ -241,9 +329,8 @@ def _build_figure(df, chart_type: str, title: str, hint: dict, intent: str = "")
             df_funnel[val_col] = pd.to_numeric(df_funnel[val_col], errors="coerce")
             df_funnel = df_funnel.sort_values(val_col, ascending=False)
             fig = px.funnel(df_funnel, x=val_col, y=step_col, title=title)
-        # 情况2：多行宽表（多分类×N数值列） → melt 为长表，画分组柱状图
         elif len(df) > 1 and cat_cols and len(numeric_cols) >= 2:
-            id_col = hint_x or cat_cols[0]
+            id_col = cat_cols[0]
             count_cols = [c for c in numeric_cols if not any(
                 kw in c.lower() for kw in ["rate", "ratio", "pct", "percent", "率", "比"]
             )]
@@ -255,13 +342,11 @@ def _build_figure(df, chart_type: str, title: str, hint: dict, intent: str = "")
                          labels={"stage": "漏斗阶段", "count": "用户数"})
             if show_label:
                 fig.update_traces(texttemplate="%{y:,.0f}", textposition="outside")
-        # 情况3：普通长表（每行一个阶段）
         else:
-            x_col = hint_x or (cat_cols[0] if cat_cols else cols[0])
             fig = px.funnel(df, x=y_col, y=x_col, title=title)
 
     elif chart_type == "heatmap":
-        hm_x = hint_x or (cat_cols[0] if len(cat_cols) >= 1 else cols[0])
+        hm_x = cat_cols[0] if len(cat_cols) >= 1 else cols[0]
         hm_y = cat_cols[1] if len(cat_cols) >= 2 else cols[1]
         try:
             pivot = df.pivot(index=hm_y, columns=hm_x, values=y_col)
@@ -276,7 +361,6 @@ def _build_figure(df, chart_type: str, title: str, hint: dict, intent: str = "")
             fig.update_layout(title=title, **_layout)
             return fig.to_json()
         except Exception:
-            # pivot 失败时降级为分组柱状图
             fig = px.bar(df, x=hm_x, y=y_col, color=hm_y, title=title, barmode="group")
 
     if fig is None:
@@ -287,12 +371,10 @@ def _build_figure(df, chart_type: str, title: str, hint: dict, intent: str = "")
 
 
 def chart_node(state: GraphState) -> GraphState:
-    """Chart Agent 节点：自动选图表类型并生成 plotly JSON"""
+    """Chart Agent 节点：纯规则推断图表类型并生成 plotly JSON"""
     import pandas as pd
 
     sql_results = state.get("sql_results", [])
-    raw_hint = state.get("chart_hint", {})
-    hint = _parse_hint(raw_hint)
     intent = state.get("intent", state.get("question", ""))
     log = list(state.get("process_log") or [])
     log.append("📊 [Chart Agent] 正在判断图表类型...")
@@ -310,9 +392,9 @@ def chart_node(state: GraphState) -> GraphState:
         time_kws = ["date", "time", "month", "year", "day", "日", "月", "年"]
         has_time = any(any(kw in c.lower() for kw in time_kws) for c in cols_tmp)
         numeric_cnt = sum(1 for c in cols_tmp if pd.api.types.is_numeric_dtype(df_tmp[c]))
-        # 漏斗图：多行宽表也给高分
-        is_funnel = hint.get("type") == "funnel" and numeric_cnt >= 2
-        score = 20 if is_funnel else ((10 if has_time else 0) - numeric_cnt)
+        # 多列数值数据（潜在漏斗/多维分析）给高分
+        is_rich = numeric_cnt >= 2 and len(df_tmp) > 1
+        score = 20 if is_rich else ((10 if has_time else 0) + numeric_cnt)
         if score > best_score:
             best_score = score
             target = r
@@ -328,20 +410,24 @@ def chart_node(state: GraphState) -> GraphState:
             log.append("   ⚠️ 数据为空，跳过图表生成")
             return {**state, "chart_json": "", "chart_source_index": 0, "process_log": log}
 
-        chart_type = _infer_chart_type(df, hint.get("type", ""))
+        # 将字符串类型的数值列转为真正的数值类型（DB DECIMAL 可能经 JSON 序列化后变字符串）
+        for c in df.columns:
+            if pd.api.types.is_string_dtype(df[c]) or df[c].dtype == object:
+                try:
+                    df[c] = pd.to_numeric(df[c])
+                except (ValueError, TypeError):
+                    pass  # 非数值文本列，保持原样
+
+        chart_type = _infer_chart_type(df, intent)
 
         if chart_type == "table":
             log.append(f"   📋 判断结果：纯表格展示（数据列：{list(df.columns)}）")
             return {**state, "chart_json": "", "chart_source_index": target_index, "process_log": log}
 
-        chart_json = _build_figure(df, chart_type, title=intent, hint=hint, intent=intent)
-        source = "Planner 建议" if hint.get("type") and hint.get("type") != "table" else "规则推断"
+        chart_json = _build_figure(df, chart_type, title=intent, intent=intent)
         log.append(
-            f"   ✅ 图表类型：{chart_type}（{source}）"
-            + (f"  x={hint.get('x')}" if hint.get("x") else "")
-            + (f"  y={hint.get('y')}" if hint.get("y") else "")
-            + (f"  y2={hint.get('y2')}" if hint.get("y2") else "")
-            + f"\n   数据：{len(df)} 行 × {len(df.columns)} 列"
+            f"   ✅ 图表类型：{chart_type}（规则推断）\n"
+            f"   数据：{len(df)} 行 × {len(df.columns)} 列"
         )
         return {**state, "chart_json": chart_json, "chart_source_index": target_index, "process_log": log}
 

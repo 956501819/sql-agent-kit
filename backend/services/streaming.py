@@ -26,12 +26,14 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator
 
 # 导入各 Agent 节点函数
+from sql_agent.multi.classifier import classifier_node  # 简单问题分类节点
 from sql_agent.multi.planner import planner_node    # 任务规划节点
 from sql_agent.multi.sql_node import sql_node       # SQL 执行节点
 from sql_agent.multi.chart import chart_node        # 图表生成节点
 from sql_agent.multi.summary import summary_node    # 结果摘要节点
 from sql_agent.multi.judge import judge_node        # 结果评估节点
 from sql_agent.multi.state import GraphState        # 图状态类型定义
+from sql_agent.graph.pipeline import _route_after_classifier  # 分类器后路由
 from sql_agent.graph.pipeline import _route_after_sql  # SQL 执行后的路由逻辑
 
 # -----------------------------------------------------------------------------
@@ -54,48 +56,85 @@ PIPELINE_TIMEOUT = 240
 
 def _wrap_node(node_fn, queue: asyncio.Queue, loop: asyncio.AbstractEventLoop, source: str = ""):
     """
-    包装 LangGraph 节点函数，实现流式日志输出。
+    包装 LangGraph 节点函数，实现流式日志输出和中间结果推送。
 
     工作原理：
-    1. 记录节点执行前的 process_log 长度
+    1. 记录节点执行前的 process_log / sql_results / chart_json
     2. 执行原始节点函数
-    3. 对比执行后的 process_log，将新增条目推送到异步队列
+    3. 对比执行后的变化，将新增日志和中间结果推送到异步队列
     4. 通过 run_coroutine_threadsafe 实现跨线程通信
 
     Args:
         node_fn: 原始的节点函数，如 planner_node, sql_node 等
-        queue: asyncio 异步队列，用于传递日志条目
+        queue: asyncio 异步队列，用于传递事件
         loop: asyncio 事件循环，用于 run_coroutine_threadsafe
-        source: 日志来源标识，如 "planner", "sql", "chart" 等
+        source: 节点标识，如 "planner", "sql", "chart" 等
 
     Returns:
         wrapped: 包装后的节点函数，接收并返回 GraphState
     """
     def wrapped(state: GraphState) -> GraphState:
-        # 记录执行前的日志条目数量
-        prev_len = len(state.get("process_log") or [])
-        
+        # 记录执行前的快照
+        prev_log_len = len(state.get("process_log") or [])
+        prev_sql_results = state.get("sql_results") or []
+        prev_chart_json = state.get("chart_json", "")
+
         # 执行原始节点函数，获取更新后的状态
         new_state = node_fn(state)
-        
-        # 获取执行后的 process_log
+
+        # 1. 推送新增的日志条目（现有逻辑）
         new_log = new_state.get("process_log") or []
-        
-        # 遍历新增的日志条目
-        for entry in new_log[prev_len:]:
-            # 将日志条目发送到异步队列
-            # run_coroutine_threadsafe 允许从非 async 线程调用 async 函数
+        for entry in new_log[prev_log_len:]:
             asyncio.run_coroutine_threadsafe(
                 queue.put({
-                    "type": "log",    # 事件类型：日志
-                    "text": entry,     # 日志文本内容
-                    "source": source   # 日志来源
+                    "type": "log",
+                    "text": entry,
+                    "source": source
                 }),
                 loop,
             )
-        
+
+        # 2. sql_node 完成后立即推送 SQL 结果
+        if source == "sql":
+            new_sql_results = new_state.get("sql_results") or []
+            if len(new_sql_results) > len(prev_sql_results):
+                payload = []
+                for r in new_sql_results:
+                    data = r.get("data", [])
+                    truncated = len(data) > 500
+                    payload.append({
+                        "question": r.get("question", ""),
+                        "sql": r.get("sql", ""),
+                        "success": r.get("success", False),
+                        "data": data[:500] if truncated else data,
+                        "truncated": truncated,
+                        "error": r.get("error", ""),
+                        "confidence": r.get("confidence", 0.0),
+                    })
+                asyncio.run_coroutine_threadsafe(
+                    queue.put({"type": "sql_result", "sql_results": payload}),
+                    loop,
+                )
+
+        # 3. chart_node 完成后立即推送图表
+        if source == "chart":
+            new_chart = new_state.get("chart_json", "")
+            if new_chart and new_chart != prev_chart_json:
+                try:
+                    chart_obj = json.loads(new_chart)
+                    asyncio.run_coroutine_threadsafe(
+                        queue.put({
+                            "type": "chart",
+                            "chart": chart_obj,
+                            "chart_source_index": new_state.get("chart_source_index", 0),
+                        }),
+                        loop,
+                    )
+                except Exception:
+                    pass
+
         return new_state
-    
+
     return wrapped
 
 
@@ -121,17 +160,25 @@ def _build_streaming_pipeline(queue: asyncio.Queue, loop: asyncio.AbstractEventL
 
     # 创建状态图，使用 GraphState 定义状态结构
     graph = StateGraph(GraphState)
-    
+
     # 添加节点：每个节点都包装了流式日志功能
+    graph.add_node("classifier",   _wrap_node(classifier_node, queue, loop, source="classifier"))
     graph.add_node("planner",      _wrap_node(planner_node,  queue, loop, source="planner"))
     graph.add_node("sql_agent",    _wrap_node(sql_node,      queue, loop, source="sql"))
     graph.add_node("chart_agent",  _wrap_node(chart_node,    queue, loop, source="chart"))
     graph.add_node("summary_agent",_wrap_node(summary_node,  queue, loop, source="summary"))
     graph.add_node("judge_agent",  _wrap_node(judge_node,    queue, loop, source="judge"))
 
-    # 设置入口点：管道从 planner 开始
-    graph.set_entry_point("planner")
-    
+    # 设置入口点：管道从 classifier 开始
+    graph.set_entry_point("classifier")
+
+    # classifier 后路由：简单问题跳过 planner，否则进入 planner
+    graph.add_conditional_edges(
+        "classifier",
+        _route_after_classifier,
+        {"skip": "sql_agent", "plan": "planner"},
+    )
+
     # planner 完成后进入 sql_agent
     graph.add_edge("planner", "sql_agent")
     
@@ -299,27 +346,15 @@ async def run_pipeline_streaming(question: str) -> AsyncGenerator[dict, None]:
             "confidence": r.get("confidence", 0.0),
         })
 
-    # 单独发送图表数据（支持大数据传输）
-    chart_json_str = state.get("chart_json", "")
-    if chart_json_str:
-        try:
-            # 解析 JSON 字符串为对象
-            chart_obj = json.loads(chart_json_str)
-            yield {
-                "type": "chart",
-                "chart": chart_obj,
-                "chart_source_index": chart_source_index
-            }
-        except Exception as e:
-            logger.warning(f"[pipeline] chart JSON parse failed: {e}")
+    # 图表已由 chart_node 完成后通过 _wrap_node 增量推送，此处不重复
 
-    # 返回最终结果
+    # 返回最终结果（summary + judge_scores 在后几个节点才生成）
     yield {
         "type": "result",
-        "sql_results": results_payload,
+        "sql_results": results_payload,  # 兜底：若前端未收到增量事件，提供完整数据
         "chart_source_index": chart_source_index,
-        "chart_hint": state.get("chart_hint", {}),
         "summary": state.get("summary", ""),
         "judge_scores": state.get("judge_scores", {}),
         "error": state.get("error", ""),
+        "skip_planner": state.get("skip_planner", False),
     }

@@ -53,5 +53,5 @@ export const suggestionsApi = {
 }
 
 export const runSqlApi = {
-  run: (sql, intent = '', chartHint = {}) => http.post('/run-sql', { sql, intent, chart_hint: chartHint }),
+  run: (sql, intent = '') => http.post('/run-sql', { sql, intent }),
 }
